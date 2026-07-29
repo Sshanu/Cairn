@@ -75,14 +75,13 @@ that file.
 
 ## Use it as a desktop app
 
-Cairn ships a web-app manifest, so you can install the page as a standalone app — its
-own window and Dock/taskbar icon, no address bar. It still runs entirely on your machine
+Cairn ships a web-app manifest, so you can install the page as a standalone Chrome app —
+its own window and Dock icon, no address bar. It still runs entirely on your machine
 against `localhost:8765`; installing just gives it an app-like frame.
 
-- **Chrome / Edge / Brave** — open **http://localhost:8765**, then click the **install
-  icon** at the right of the address bar (or **⋮ menu → Cast, save, and share → Install
-  page as app…**). Confirm, and *Cairn* opens in its own window with the cairn icon.
-- **Safari** — **File → Add to Dock…**, name it *Cairn*, and it launches like any app.
+In **Chrome**, open **http://localhost:8765**, then click the **install icon** at the
+right of the address bar (or **⋮ menu → Cast, save, and share → Install page as app…**).
+Confirm, and *Cairn* opens in its own window with the cairn icon.
 
 **Pair it with the extension.** For the full experience, also add the Chrome extension
 (see [Saving tabs](#saving-tabs)) — the app is where you browse, search and ask; the
