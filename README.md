@@ -172,7 +172,10 @@ Everything a default relies on is visible and resettable — full transparency:
 ## Run it in the background
 
 `install.sh` already sets up launchd agents that keep the server, tab poller, autosave
-and backups running — and restart them at login. Manage them any time with:
+and backups running. They're set to **restart on their own**: the server relaunches at
+login after a reboot (`RunAtLoad`) and restarts itself if it ever crashes (`KeepAlive`),
+so Cairn is just always there at localhost:8765 — nothing to start by hand. Manage them
+any time with:
 
 ```bash
 tt autostart            # (re)install the background agents
