@@ -84,6 +84,11 @@ against `localhost:8765`; installing just gives it an app-like frame.
   page as app…**). Confirm, and *Cairn* opens in its own window with the cairn icon.
 - **Safari** — **File → Add to Dock…**, name it *Cairn*, and it launches like any app.
 
+**Pair it with the extension.** For the full experience, also add the Chrome extension
+(see [Saving tabs](#saving-tabs)) — the app is where you browse, search and ask; the
+extension is how papers get *in*. Press **⌘⇧E** on any tab to save the page you're
+reading straight into a collection or topic, without leaving it.
+
 Keep the server running (see [Run it in the background](#run-it-in-the-background))
 so the app opens instantly every time.
 
