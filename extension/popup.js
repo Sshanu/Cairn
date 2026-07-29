@@ -63,7 +63,14 @@ async function fetchOpenReview(url) {
       if (!title) continue;
       let authors = val(c.authors);
       authors = Array.isArray(authors) ? authors.join(", ") : String(authors || "");
-      return { title, abstract: String(val(c.abstract) || "").trim(), authors };
+      return {
+        title,
+        abstract: String(val(c.abstract) || "").trim(),
+        authors,
+        // OpenReview's own generated BibTeX -- the server can't fetch it (Cloudflare),
+        // so hand it over from the browser, where we already have the note.
+        bibtex: String(val(c._bibtex) || "").trim(),
+      };
     } catch {
       /* try the next host */
     }
@@ -333,6 +340,8 @@ async function save() {
     encodeURIComponent(((META && META.abstract) || "").slice(0, 5000)) +
     "&authors=" +
     encodeURIComponent((META && META.authors) || "") +
+    "&bibtex=" +
+    encodeURIComponent((META && META.bibtex) || "") +
     "&tags=" +
     encodeURIComponent(parts.join(","));
   try {

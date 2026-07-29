@@ -237,7 +237,7 @@ def _settings_view() -> dict:
 
 
 @app.post("/api/capture")
-def capture_tab(url: str, title: str = "", abstract: str = "", authors: str = "", tags: str = "") -> dict:
+def capture_tab(url: str, title: str = "", abstract: str = "", authors: str = "", bibtex: str = "", tags: str = "") -> dict:
     """Save one tab straight from the browser extension's "Save to Cairn" popup.
 
     The url + title come from the page itself, so -- unlike the old macOS Quick Action
@@ -267,6 +267,17 @@ def capture_tab(url: str, title: str = "", abstract: str = "", authors: str = ""
         )
         if facets:
             db.add_tags(conn, saved.item_id, facets, origin="model")
+        # OpenReview publishes each paper's BibTeX in the note, but the server is
+        # Cloudflare-blocked from fetching it -- so the extension grabs it from the
+        # browser and hands it over here. Store it only when we have none already
+        # (never over an entry resolved from a published source or typed by hand).
+        entry = bibtex.strip()
+        if entry and not (row["bibtex"] or "").strip():
+            published = not entry.lstrip().lower().startswith(("@misc", "@unpublished"))
+            db.set_bibtex(
+                conn, saved.item_id, bibtex=entry, source="openreview",
+                venue=None, published=published,
+            )
     return {"saved": True, "title": saved.title or title, "created": saved.created}
 
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Save to Cairn",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Save the current tab to your local Cairn research library — pick a collection/branch, like Zotero. Reads the page's own metadata so even bot-protected sites (OpenReview) save with a real title and abstract.",
   "permissions": ["activeTab", "scripting"],
   "host_permissions": ["http://localhost:8765/*", "https://*.openreview.net/*"],
