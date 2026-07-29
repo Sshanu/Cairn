@@ -125,9 +125,11 @@ def backfill(
 
                 if result.title and looks_generic(row["title"]) and not looks_generic(result.title):
                     db.set_fields(conn, row["id"], title=result.title)
-            elif row["bibtex"] and row["bibtex_source"] != "manual":
-                # Re-resolution found nothing this time -- clear a previously
-                # stored auto entry, but never touch one the user typed.
+            elif row["bibtex"] and row["bibtex_source"] not in ("manual", "openreview"):
+                # Re-resolution found nothing this time -- clear a previously stored auto
+                # entry, but never touch one the user typed (`manual`) or one the
+                # extension captured from OpenReview (`openreview`), which the server
+                # can't re-fetch and so would always appear to "find nothing".
                 db.clear_bibtex(conn, row["id"])
             if on_result:
                 on_result(row, result)

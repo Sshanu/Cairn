@@ -677,10 +677,21 @@ def refresh_bibtex(item_id: int) -> dict:
 def _resolve_and_store(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     result = bibtex.for_item(row)
     if not result.ok:
-        # No real entry online. We never fabricate one -- clear any stale auto
-        # entry and tell the UI to offer a paste box. Not an error.
-        if row["bibtex"] and row["bibtex_source"] != "manual":
+        # No real entry online. We never fabricate one -- clear any stale auto entry
+        # and tell the UI to offer a paste box. Not an error. But never clear a `manual`
+        # entry the user typed, nor an `openreview` one the extension captured from the
+        # browser -- the server CAN'T re-fetch OpenReview (Cloudflare), so a re-resolve
+        # here always comes back empty and would wrongly wipe a good entry.
+        if row["bibtex"] and row["bibtex_source"] not in ("manual", "openreview"):
             db.clear_bibtex(conn, row["id"])
+        elif row["bibtex"]:
+            # We kept a manual/openreview entry -- return it so the panel keeps showing
+            # it instead of flashing "not found".
+            return {
+                "bibtex": row["bibtex"], "source": row["bibtex_source"],
+                "venue": row["bibtex_venue"], "published": bool(row["bibtex_published"]),
+                "found": True,
+            }
         return {"bibtex": None, "source": None, "venue": None, "published": False, "found": False}
     db.set_bibtex(
         conn, row["id"],
