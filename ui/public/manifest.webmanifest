@@ -1,0 +1,16 @@
+{
+  "name": "Cairn",
+  "short_name": "Cairn",
+  "description": "Track, search and organize the papers you read.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf9f5",
+  "theme_color": "#c15f3c",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cg%20fill='%23c15f3c'%3E%3Cellipse%20cx='12'%20cy='20.2'%20rx='7.2'%20ry='2.6'/%3E%3Cellipse%20cx='11.3'%20cy='15.6'%20rx='5.6'%20ry='2.3'%20opacity='0.82'/%3E%3Cellipse%20cx='12.7'%20cy='11.5'%20rx='4.4'%20ry='2.05'/%3E%3Cellipse%20cx='11.6'%20cy='7.8'%20rx='3.1'%20ry='1.75'%20opacity='0.82'/%3E%3Cellipse%20cx='12.2'%20cy='4.6'%20rx='1.95'%20ry='1.45'/%3E%3C/g%3E%3C/svg%3E",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

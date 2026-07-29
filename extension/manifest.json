@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Save to Cairn",
+  "version": "1.2.1",
+  "description": "Save the current tab to your local Cairn research library — pick a collection/branch, like Zotero. Reads the page's own metadata so even bot-protected sites (OpenReview) save with a real title and abstract.",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["http://localhost:8765/*", "https://*.openreview.net/*"],
+  "action": { "default_popup": "popup.html", "default_title": "Save to Cairn" },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Ctrl+Shift+E", "mac": "Command+Shift+E" },
+      "description": "Save the current tab to Cairn"
+    }
+  },
+  "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" }
+}

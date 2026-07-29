@@ -1,0 +1,28 @@
+[project]
+name = "cairn"
+version = "0.1.0"
+description = "Local macOS tool for tracking, searching and tagging papers and blogs read in Chrome"
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+# Model backends. The direct backend needs the Anthropic SDK.
+api = ["anthropic>=0.40"]
+# Body-text extraction for blog posts.
+extract = ["trafilatura>=1.8"]
+# Web UI (section 12 of doc.md, not built yet).
+web = ["fastapi>=0.110", "uvicorn>=0.29", "jinja2>=3.1", "python-multipart>=0.0.9"]
+# Local, offline embedding-driven topic organization (no PyTorch).
+embed = ["model2vec>=0.3", "scikit-learn>=1.3"]
+
+[project.scripts]
+tt = "cairn.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cairn*"]
