@@ -293,6 +293,27 @@ def lookup_tab(url: str) -> dict:
     return {"exists": True, "title": row["title"], "tags": sorted(tags)}
 
 
+@app.get("/api/resolve")
+def resolve_preview(url: str) -> dict:
+    """Preview the metadata a save WOULD extract for a URL, without saving it -- so the
+    extension popup can show the real title on a page it can't scrape itself (a PDF
+    viewer has no HTML). The server resolves ACL / arXiv / DOI / conference metadata over
+    the web; it can't reach a bot-walled site (OpenReview), which the extension fetches
+    from the browser instead."""
+    from . import meta
+    from .canonical import canonicalize
+
+    canonical = canonicalize(url)
+    if not canonical or not canonical.startswith("http"):
+        return {"title": "", "authors": "", "abstract": ""}
+    got = meta.resolve(canonical, url)
+    return {
+        "title": got.get("title") or "",
+        "authors": got.get("authors") or "",
+        "abstract": got.get("abstract") or "",
+    }
+
+
 @app.get("/api/branches")
 def list_branches() -> dict:
     """The fileable branches for the extension's collection picker: the topic hierarchy

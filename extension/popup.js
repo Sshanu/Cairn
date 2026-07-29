@@ -276,6 +276,17 @@ async function loadMeta() {
   // else: the page's meta tags.
   if (/openreview\.net/i.test(tab.url)) META = await fetchOpenReview(tab.url);
   if ((!META || !META.title) && tab.id != null) META = await scrapePageMeta(tab.id);
+  // Still nothing? A PDF viewer has no HTML to scrape -- so ask the server what a save
+  // would extract (it resolves ACL / arXiv / DOI / conference metadata over the web).
+  // This is what puts the real title in the popup for a PDF instead of the file name.
+  if (!META || !META.title) {
+    try {
+      const d = await (await fetch(API + "/api/resolve?url=" + encodeURIComponent(tab.url))).json();
+      if (d && d.title) META = { title: d.title, abstract: d.abstract || "", authors: d.authors || "" };
+    } catch {
+      /* offline or not resolvable -- fall back to the tab title */
+    }
+  }
   if (META && META.title) $("title").textContent = META.title;
 }
 
