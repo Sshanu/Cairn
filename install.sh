@@ -42,18 +42,25 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 python -m pip install --quiet --upgrade pip
-python -m pip install --quiet -e ".[api,extract,web]"
+# embed = model2vec + scikit-learn, the offline embeddings the topic organizer needs;
+# leaving it out gives a working app whose auto-organizing quietly no-ops.
+python -m pip install --quiet -e ".[api,extract,web,embed]"
 
 # --- web UI ----------------------------------------------------------------
 echo "==> Building the web UI (first run downloads npm packages)"
 ( cd ui && npm install --no-audit --no-fund --silent && npm run build >/dev/null )
 
 # --- background agents -----------------------------------------------------
-echo "==> Installing & starting the background agents (serve · poll · autosave · backup)"
-tt autostart
-
-echo
-echo "✅ Cairn is running:  http://localhost:8765"
+if [ "${CAIRN_NO_AGENTS:-0}" = "1" ]; then
+  echo "==> Skipping background agents (CAIRN_NO_AGENTS=1)"
+  echo
+  echo "✅ Setup complete. Start Cairn with:  source .venv/bin/activate && tt serve"
+else
+  echo "==> Installing & starting the background agents (serve · poll · autosave · backup)"
+  tt autostart
+  echo
+  echo "✅ Cairn is running:  http://localhost:8765"
+fi
 echo
 echo "Next:"
 echo "  • Open it, then Settings → Agent to pick a model backend (or None — search and"

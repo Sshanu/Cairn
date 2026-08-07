@@ -61,7 +61,7 @@ re-run. Requires **Python 3.10+** and **Node 18+**.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[api,extract,web]"      # extras: API, metadata extraction, web UI
+pip install -e ".[api,extract,web,embed]"   # API, extraction, web UI, offline embeddings
 cd ui && npm install && npm run build && cd ..
 tt serve --port 8765                      # foreground; or `tt autostart` for the background agents
 ```
