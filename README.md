@@ -52,6 +52,10 @@ That's it. `install.sh` creates the Python environment, builds the web UI, and s
 the background agents that keep Cairn live at **http://localhost:8765**. It's safe to
 re-run. Requires **Python 3.10+** and **Node 18+**.
 
+> macOS ships Python 3.9, which is too old. If the script says it needs a newer Python,
+> install one with `brew install python@3.12` (or from [python.org](https://www.python.org/downloads/))
+> and re-run `./install.sh` — it will find it and rebuild the environment.
+
 <details>
 <summary>Prefer to run the steps yourself?</summary>
 
