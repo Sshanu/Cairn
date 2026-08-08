@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -101,11 +102,18 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
 CREATE INDEX IF NOT EXISTS idx_items_status    ON items(status);
 CREATE INDEX IF NOT EXISTS idx_items_first_seen ON items(first_seen);
 CREATE INDEX IF NOT EXISTS idx_ledger_last_seen ON ledger(last_seen);
+CREATE INDEX IF NOT EXISTS idx_item_tags_tag_item ON item_tags(tag_id, item_id);
 """
 
 # bm25 takes one weight per column, including the UNINDEXED one.
 # title, venue, authors, abstract, body, tags, item_id
 _BM25_WEIGHTS = (10.0, 7.0, 4.0, 3.0, 1.0, 6.0, 0.0)
+
+# Building a direct item-id list is dramatically faster for a leaf/small branch,
+# while a very broad branch is cheaper as a correlated membership check over the
+# already-filtered item rows. Pick the plan from a tiny indexed link count instead
+# of forcing one query shape onto both cases.
+_TAG_LOOKUP_LINK_LIMIT = 10_000
 
 _MUTABLE_FIELDS = (
     "raw_url",
@@ -123,6 +131,15 @@ _MUTABLE_FIELDS = (
     "status",
     "notes",
 )
+
+
+# Opening a SQLite connection must stay cheap. FastAPI creates worker threads on
+# demand, and each thread gets its own connection; rerunning every CREATE TABLE,
+# CREATE INDEX and migration on every thread turns a burst of otherwise read-only
+# requests into competing schema writers. Initialize each database once per
+# process, then configure later connections without touching the schema.
+_SCHEMA_LOCK = threading.Lock()
+_SCHEMA_READY: dict[Path, tuple[int, int]] = {}
 
 
 def utcnow() -> str:
@@ -148,23 +165,69 @@ def age_days(timestamp: str | None) -> int | None:
     return (datetime.now(timezone.utc) - then).days
 
 
+def revision_token(path: Path | None = None) -> str:
+    """Cheap change token for UI cache invalidation.
+
+    In WAL mode committed writes touch the ``-wal`` file; checkpoints touch the
+    main database. Watching both files is enough to notice out-of-band saves from
+    the extension or background agents without polling every expensive API query.
+    """
+    database = (path or config.db_path()).expanduser()
+    parts: list[str] = []
+    for candidate in (database, Path(str(database) + "-wal")):
+        try:
+            stat = candidate.stat()
+        except FileNotFoundError:
+            continue
+        parts.append(f"{candidate.name}:{stat.st_mtime_ns}:{stat.st_size}")
+    return "|".join(parts) or "missing"
+
+
 def connect(path: Path | None = None) -> sqlite3.Connection:
-    path = path or config.db_path()
+    path = (path or config.db_path()).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=5.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")  # wait, don't error, when another writer holds the lock
-    conn.execute("PRAGMA foreign_keys=ON")
-    # Keep the WAL SMALL. The default auto-checkpoint is 1000 pages (~4MB); at that size
-    # every read has to scan the WAL (walFindFrame) and queries crawl -- this is what made
-    # the whole UI drag once the WAL bloated. Check-point far more often, and sync only at
-    # checkpoints (safe under WAL) so writes stay cheap.
-    conn.execute("PRAGMA wal_autocheckpoint=200")  # ~800KB, keeps reads fast
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.executescript(SCHEMA)
-    migrate(conn)
-    return conn
+    try:
+        conn.execute(
+            "PRAGMA busy_timeout=5000"
+        )  # wait, don't error, when another writer holds the lock
+        conn.execute("PRAGMA foreign_keys=ON")
+        _ensure_schema(conn, path)
+        # Keep the WAL SMALL. The default auto-checkpoint is 1000 pages (~4MB); at that size
+        # every read has to scan the WAL (walFindFrame) and queries crawl -- this is what made
+        # the whole UI drag once the WAL bloated. Check-point far more often, and sync only at
+        # checkpoints (safe under WAL) so writes stay cheap.
+        conn.execute("PRAGMA wal_autocheckpoint=200")  # ~800KB, keeps reads fast
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+    except Exception:
+        conn.close()
+        raise
+
+
+def _ensure_schema(conn: sqlite3.Connection, path: Path) -> None:
+    """Create/migrate ``path`` once per process, never once per worker thread."""
+    key = path.resolve()
+    with _SCHEMA_LOCK:
+        stat = path.stat()
+        identity = (stat.st_dev, stat.st_ino)
+        if _SCHEMA_READY.get(key) == identity:
+            # A database can be deleted/replaced while a long-lived process is
+            # running (restore from backup, tests, manual reset). The inode check
+            # catches replacement; this table check also catches in-place truncation.
+            ready = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'items'"
+            ).fetchone()
+            if ready:
+                return
+        # journal_mode is persistent database metadata and can take a schema lock;
+        # set it only on the one initializer connection, not on every reader.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.executescript(SCHEMA)
+        migrate(conn)
+        stat = path.stat()
+        _SCHEMA_READY[key] = (stat.st_dev, stat.st_ino)
 
 
 @contextmanager
@@ -229,9 +292,30 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
             conn.execute(f"ALTER TABLE items ADD COLUMN {ddl}")
             applied.append(f"items.{column}")
 
-    # Created here rather than in SCHEMA: on an existing database the column
-    # does not exist until the ALTER above has run.
+    # Created here rather than in SCHEMA: on an existing database the bucket
+    # column does not exist until the ALTER above has run. These compound indexes
+    # match the hot UI paths instead of filtering by one index and sorting the
+    # result again in a temporary B-tree.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_items_bucket ON items(bucket)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_items_saved_at ON items(saved_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_items_bucket_saved_at "
+        "ON items(bucket, saved_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_items_bucket_first_seen "
+        "ON items(bucket, first_seen DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_items_history_day "
+        "ON items(substr(first_seen, 1, 10) DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_items_bucket_history_day "
+        "ON items(bucket, substr(first_seen, 1, 10) DESC)"
+    )
     conn.commit()
 
     # The search index gained a `venue` column so a query like "LREC" finds a
@@ -790,26 +874,35 @@ def create_tag(
     return normalized
 
 
-def tag_tree(conn: sqlite3.Connection) -> list[dict]:
+def tag_tree(
+    conn: sqlite3.Connection, counts: dict[str, int] | None = None
+) -> list[dict]:
     """Tag counts arranged as a hierarchy, for a browsable sidebar.
 
     Includes tags with no items: an empty branch you just created has to be
     visible, or there is nowhere to drop anything.
     """
-    counts = dict(tag_counts(conn))
-    for name in vocabulary(conn):
-        counts.setdefault(name, 0)
-    descriptions = {
-        r["name"]: r["description"]
-        for r in conn.execute(
-            "SELECT name, description FROM tags WHERE description IS NOT NULL AND TRIM(description) != ''"
-        )
-    }
+    counts = dict(tag_counts(conn)) if counts is None else dict(counts)
+    # Load tag metadata once. The previous implementation queried vocabulary and
+    # descriptions separately, then split the same path again for every item-tag
+    # link. A library has many more links than unique tags, so precompute each
+    # tag's ancestor paths once and stream only integer IDs through the hot loop.
+    tag_rows = list(
+        conn.execute("SELECT id, name, description FROM tags ORDER BY name")
+    )
+    for row in tag_rows:
+        counts.setdefault(row["name"], 0)
+
     nodes: dict[str, dict] = {}
-    for name in sorted(counts):
+    ancestry_by_tag_id: dict[int, tuple[str, ...]] = {}
+    for row in tag_rows:
+        name = row["name"]
         parts = name.split("/")
-        for depth in range(len(parts)):
-            path = "/".join(parts[: depth + 1])
+        paths = tuple(
+            "/".join(parts[: depth + 1]) for depth in range(len(parts))
+        )
+        ancestry_by_tag_id[row["id"]] = paths
+        for depth, path in enumerate(paths):
             nodes.setdefault(
                 path,
                 {
@@ -818,31 +911,33 @@ def tag_tree(conn: sqlite3.Connection) -> list[dict]:
                     "depth": depth,
                     "count": 0,
                     "own": counts.get(path, 0),
-                    "description": descriptions.get(path),
+                    "description": row["description"] if path == name else None,
                 },
             )
+
     # A parent's count includes everything filed beneath it, counted as DISTINCT
     # items -- summing per-tag counts double-counts an item tagged at both a parent
     # and a descendant (topic/nlp AND topic/nlp/parsing), so the sidebar showed 2
-    # where a click listed 1.
-    #
-    # This used to run one `COUNT(DISTINCT ...) WHERE name = ? OR name LIKE ?` query
-    # PER node -- hundreds of subtree scans per call, ~700ms. Instead, walk every
-    # (item, tag) pair once: each item contributes +1 to its tag's path and every
-    # ancestor path, deduped per item, which is exactly the distinct-subtree count and
-    # matches the `name = ? OR name LIKE ?` item filter. One query, one pass, ~20ms.
+    # where a click listed 1. Walk every item/tag pair once and keep only the
+    # current item's ancestor set in memory.
     subtree: dict[str, int] = {}
-    seen_here: dict[str, set[int]] = {}
-    for item_id, name in conn.execute(
-        "SELECT it.item_id, t.name FROM item_tags it JOIN tags t ON t.id = it.tag_id"
+    current_item: int | None = None
+    current_paths: set[str] = set()
+
+    def flush_item() -> None:
+        for path in current_paths:
+            subtree[path] = subtree.get(path, 0) + 1
+
+    for item_id, tag_id in conn.execute(
+        "SELECT item_id, tag_id FROM item_tags ORDER BY item_id"
     ):
-        parts = name.split("/")
-        for depth in range(len(parts)):
-            path = "/".join(parts[: depth + 1])
-            bucket = seen_here.setdefault(path, set())
-            if item_id not in bucket:
-                bucket.add(item_id)
-                subtree[path] = subtree.get(path, 0) + 1
+        if current_item is not None and item_id != current_item:
+            flush_item()
+            current_paths.clear()
+        current_item = item_id
+        current_paths.update(ancestry_by_tag_id[tag_id])
+    if current_item is not None:
+        flush_item()
     for path, node in nodes.items():
         node["count"] = subtree.get(path, 0)
     return [nodes[k] for k in sorted(nodes)]
@@ -923,6 +1018,31 @@ def item_tags(conn: sqlite3.Connection, item_id: int) -> list[str]:
     ]
 
 
+def item_tags_many(
+    conn: sqlite3.Connection, item_ids: Sequence[int]
+) -> dict[int, list[str]]:
+    """Fetch tags for a page of items in a bounded number of queries.
+
+    List and history endpoints used to call :func:`item_tags` once per row, so a
+    120-item workspace page performed 121+ SQL statements. Chunking also keeps
+    this safe on SQLite builds with a conservative host-parameter limit.
+    """
+    ids = list(dict.fromkeys(int(item_id) for item_id in item_ids))
+    result = {item_id: [] for item_id in ids}
+    for start in range(0, len(ids), 400):
+        chunk = ids[start : start + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        for row in conn.execute(
+            "SELECT it.item_id, t.name FROM item_tags it "
+            "JOIN tags t ON t.id = it.tag_id "
+            f"WHERE it.item_id IN ({placeholders}) "
+            "ORDER BY it.item_id, t.name",
+            chunk,
+        ):
+            result[row["item_id"]].append(row["name"])
+    return result
+
+
 def tag_counts(conn: sqlite3.Connection) -> list[tuple[str, int]]:
     return [
         (row["name"], row["n"])
@@ -931,6 +1051,14 @@ def tag_counts(conn: sqlite3.Connection) -> list[tuple[str, int]]:
             "JOIN tags t ON t.id = it.tag_id GROUP BY t.name ORDER BY n DESC, t.name"
         )
     ]
+
+
+def tag_snapshot(
+    conn: sqlite3.Connection,
+) -> tuple[list[dict], list[tuple[str, int]]]:
+    """Return tree and flat counts without aggregating the same links twice."""
+    flat = tag_counts(conn)
+    return tag_tree(conn, counts=dict(flat)), flat
 
 
 def vocabulary(conn: sqlite3.Connection) -> list[str]:
@@ -1089,7 +1217,7 @@ def history(
     where = ["first_seen IS NOT NULL"]
     params: list[Any] = []
     if bucket:
-        where.append("COALESCE(bucket, 'library') = ?")
+        where.append("bucket = ?")
         params.append(bucket)
     if before:
         where.append("substr(first_seen, 1, 10) < ?")
@@ -1111,10 +1239,11 @@ def history(
     item_params: list[Any] = list(days)
     bucket_clause = ""
     if bucket:
-        bucket_clause = " AND COALESCE(bucket, 'library') = ?"
+        bucket_clause = " AND bucket = ?"
         item_params.append(bucket)
     rows = conn.execute(
-        f"SELECT * FROM items WHERE substr(first_seen, 1, 10) IN ({placeholders})"
+        "SELECT id, canonical_url, title, source, venue, year, first_seen, saved_at "
+        f"FROM items WHERE substr(first_seen, 1, 10) IN ({placeholders})"
         f"{bucket_clause} ORDER BY first_seen DESC, saved_at DESC",
         item_params,
     ).fetchall()
@@ -1136,6 +1265,31 @@ def since_bound(since: str | None) -> str | None:
     return f"{year}-{month}-{day}T00:00:00+00:00"
 
 
+def tag_filter_strategy(conn: sqlite3.Connection, tag: str | None) -> str | None:
+    """Choose the cheaper subtree membership plan for ``tag``.
+
+    ``lookup`` starts at the matching tag IDs and follows the reverse link index;
+    ``scan`` checks membership while walking the item result set. The former wins
+    by orders of magnitude for leaves, but materializing a huge item-id list is
+    needless work for a root branch that matches most of the library.
+    """
+    if not tag:
+        return None
+    normalized = normalize_tag(tag)
+    # Stop as soon as a branch is known to be broad. Counting every matching
+    # link just to choose the scan plan made root facets pay for the whole
+    # subtree twice; the bounded subquery is exact for small branches and caps
+    # the decision cost for large ones.
+    links = conn.execute(
+        "SELECT COUNT(*) AS n FROM ("
+        "SELECT 1 FROM item_tags it WHERE it.tag_id IN ("
+        "SELECT t.id FROM tags t WHERE t.name = ? OR t.name GLOB ?) "
+        "LIMIT ?)",
+        (normalized, normalized + "/*", _TAG_LOOKUP_LINK_LIMIT + 1),
+    ).fetchone()["n"]
+    return "lookup" if links <= _TAG_LOOKUP_LINK_LIMIT else "scan"
+
+
 def _build_query(
     terms: Sequence[str],
     tag: str | None,
@@ -1146,6 +1300,7 @@ def _build_query(
     untagged: bool,
     no_topic: bool,
     mode: str = "AND",
+    tag_strategy: str | None = None,
 ) -> tuple[str, str, list[Any]]:
     """Return (from_clause, order_by, params) shared by search and count."""
     params: list[Any] = []
@@ -1165,11 +1320,17 @@ def _build_query(
     where: list[str] = []
     if tag:
         normalized = normalize_tag(tag)
-        where.append(
-            "EXISTS (SELECT 1 FROM item_tags it JOIN tags t ON t.id = it.tag_id "
-            "WHERE it.item_id = i.id AND (t.name = ? OR t.name LIKE ?))"
-        )
-        params.extend([normalized, normalized + "/%"])
+        if tag_strategy == "lookup":
+            where.append(
+                "i.id IN (SELECT it.item_id FROM item_tags it WHERE it.tag_id IN ("
+                "SELECT t.id FROM tags t WHERE t.name = ? OR t.name GLOB ?))"
+            )
+        else:
+            where.append(
+                "EXISTS (SELECT 1 FROM item_tags it JOIN tags t ON t.id = it.tag_id "
+                "WHERE it.item_id = i.id AND (t.name = ? OR t.name GLOB ?))"
+            )
+        params.extend([normalized, normalized + "/*"])
     if untagged:
         # Deliberately not "has no tags": every item carries computed type/venue/
         # site tags, so that test matched almost nothing. Unassigned means no
@@ -1188,7 +1349,7 @@ def _build_query(
         where.append("i.status = ?")
         params.append(status)
     if bucket:
-        where.append("COALESCE(i.bucket, 'library') = ?")
+        where.append("i.bucket = ?")
         params.append(bucket)
     if source:
         where.append("COALESCE(i.source, 'web') = ?")
@@ -1217,10 +1378,21 @@ def search(
     no_topic: bool = False,
     sort: str | None = None,
     mode: str = "AND",
+    tag_strategy: str | None = None,
 ) -> list[sqlite3.Row]:
     """FTS5 with BM25 ranking. Sub-millisecond, deterministic, no model."""
+    strategy = tag_strategy if tag_strategy is not None else tag_filter_strategy(conn, tag)
     from_clause, order, params = _build_query(
-        terms, tag, status, since, bucket, source, untagged, no_topic, mode
+        terms,
+        tag,
+        status,
+        since,
+        bucket,
+        source,
+        untagged,
+        no_topic,
+        mode,
+        strategy,
     )
     # Ordering must happen in SQL: sorting only the fetched page would put the
     # oldest item on page 2 above the newest on page 1.
@@ -1248,10 +1420,21 @@ def count(
     source: str | None = None,
     untagged: bool = False,
     no_topic: bool = False,
+    tag_strategy: str | None = None,
 ) -> int:
     """How many rows the same filters match, independent of any page size."""
+    strategy = tag_strategy if tag_strategy is not None else tag_filter_strategy(conn, tag)
     from_clause, _order, params = _build_query(
-        terms, tag, status, since, bucket, source, untagged, no_topic
+        terms,
+        tag,
+        status,
+        since,
+        bucket,
+        source,
+        untagged,
+        no_topic,
+        "AND",
+        strategy,
     )
     return conn.execute(
         f"SELECT COUNT(*) AS n {from_clause}", params
@@ -1268,9 +1451,11 @@ def export_items(conn: sqlite3.Connection) -> list[dict]:
     "Object of type bytes is not JSON serializable", which silently broke the
     JSON backup sidecar and `tt export` the moment any item had an embedding.
     """
+    rows = list(conn.execute("SELECT * FROM items ORDER BY id"))
+    tags_by_item = item_tags_many(conn, [row["id"] for row in rows])
     out = []
-    for row in conn.execute("SELECT * FROM items ORDER BY id"):
+    for row in rows:
         record = {key: row[key] for key in row.keys() if key not in ("body", "embedding")}
-        record["tags"] = item_tags(conn, row["id"])
+        record["tags"] = tags_by_item[row["id"]]
         out.append(record)
     return out

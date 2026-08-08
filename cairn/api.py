@@ -85,7 +85,12 @@ def _fingerprint_async(item_id: int) -> None:
     threading.Thread(target=run, daemon=True).start()
 
 
-def _serialize(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+def _serialize(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    *,
+    tags: list[str] | None = None,
+) -> dict:
     record = dict(row)
     record.pop("body", None)
     # The full BibTeX is heavy and only ever needed one item at a time; the list
@@ -94,9 +99,29 @@ def _serialize(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     record["has_bibtex"] = bool(record.pop("bibtex", None))
     record.pop("ref_ids", None)  # heavy, and only used server-side for "related"
     record.pop("embedding", None)  # raw float32 bytes -- not JSON, server-side only
-    record["tags"] = db.item_tags(conn, row["id"])
+    record["tags"] = db.item_tags(conn, row["id"]) if tags is None else tags
     record["age_days"] = db.age_days(row["first_seen"])
     return record
+
+
+def _serialize_many(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[dict]:
+    """Serialize a result page with one batched tag lookup, not one per row."""
+    tags_by_item = db.item_tags_many(conn, [row["id"] for row in rows])
+    return [
+        _serialize(conn, row, tags=tags_by_item.get(row["id"], [])) for row in rows
+    ]
+
+
+def _serialize_history(row: sqlite3.Row) -> dict:
+    """The timeline only needs row-label fields, not abstracts or tag arrays."""
+    return {
+        "id": row["id"],
+        "canonical_url": row["canonical_url"],
+        "title": row["title"],
+        "source": row["source"],
+        "venue": row["venue"],
+        "year": row["year"],
+    }
 
 
 # --- library ----------------------------------------------------------------
@@ -114,6 +139,15 @@ def build() -> dict:
     return {
         "build": str(int(index.stat().st_mtime)) if index.exists() else "dev",
     }
+
+
+@app.get("/api/revision")
+def revision() -> JSONResponse:
+    """A stat-only library change token for the UI's one lightweight poll."""
+    return JSONResponse(
+        {"revision": db.revision_token()},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/stats")
@@ -521,11 +555,20 @@ def list_items(
         "no_topic": no_topic,
     }
 
-    total = db.count(conn, terms, **filters)
-    rows = db.search(conn, terms, limit=limit, offset=offset, sort=sort, **filters)
+    tag_strategy = db.tag_filter_strategy(conn, filters["tag"])
+    total = db.count(conn, terms, tag_strategy=tag_strategy, **filters)
+    rows = db.search(
+        conn,
+        terms,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+        tag_strategy=tag_strategy,
+        **filters,
+    )
 
     return {
-        "items": [_serialize(conn, r) for r in rows],
+        "items": _serialize_many(conn, rows),
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -654,7 +697,7 @@ def history(
         date = (row["first_seen"] or "")[:10]
         if not groups or groups[-1]["date"] != date:
             groups.append({"date": date, "count": 0, "items": []})
-        groups[-1]["items"].append(_serialize(conn, row))
+        groups[-1]["items"].append(_serialize_history(row))
         groups[-1]["count"] += 1
     return {"days": groups, "next_before": next_before}
 
@@ -984,9 +1027,11 @@ def merge_items(body: DeleteBody) -> dict:
 @app.get("/api/tags")
 def list_tags() -> dict:
     conn = _conn()
-    return {"tags": db.tag_tree(conn), "flat": [
-        {"name": n, "count": c} for n, c in db.tag_counts(conn)
-    ]}
+    tree, flat = db.tag_snapshot(conn)
+    return {
+        "tags": tree,
+        "flat": [{"name": name, "count": count} for name, count in flat],
+    }
 
 
 class CreateTagBody(BaseModel):

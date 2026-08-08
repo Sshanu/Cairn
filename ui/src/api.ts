@@ -44,10 +44,14 @@ export type Bibtex = {
   found?: boolean;
 };
 
+export type HistoryItem = Pick<
+  Item,
+  "id" | "canonical_url" | "title" | "source" | "venue" | "year"
+>;
 export type HistoryDay = {
   date: string;
   count: number;
-  items: Item[];
+  items: HistoryItem[];
 };
 
 export type MapItem = {
@@ -196,6 +200,8 @@ export type ItemQuery = {
 
 export const api = {
   build: () => req<{ build: string }>("/api/build"),
+  revision: () =>
+    req<{ revision: string }>("/api/revision", { cache: "no-store" }),
 
   stats: () => req<Stats>("/api/stats"),
 

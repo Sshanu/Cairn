@@ -4,7 +4,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { CalendarClock, ChevronRight, ExternalLink } from "lucide-react";
 
-import { api, type HistoryDay, type Item } from "../api";
+import { api, type HistoryDay, type HistoryItem } from "../api";
 import { Empty, Spinner } from "../ui";
 import { DigestCard } from "../components/DigestCard";
 
@@ -170,7 +170,7 @@ function DaySection({
   );
 }
 
-function HistoryRow({ item, index }: { item: Item; index: number }) {
+function HistoryRow({ item, index }: { item: HistoryItem; index: number }) {
   const navigate = useNavigate();
   const meta = [item.source, item.venue, item.year].filter(Boolean).join(" · ");
   return (

@@ -32,23 +32,24 @@ function report(err: unknown, kind: string) {
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    // Keep the app live without a manual refresh. Saving from the extension is an
-    // out-of-band write, so: refetch on focus (switching back to the app), AND poll
-    // every 8s while the tab is visible -- the latter covers Cairn running in its own
-    // window that never gets "focused" when you save from another Chrome window.
+    // Keep cached pages warm across navigation. Heavy library endpoints must never
+    // inherit a polling interval: doing that refetched items, history, tags, stats,
+    // settings, and map data together every few seconds. A tiny revision watcher in
+    // App.tsx marks library data stale only when the SQLite files actually change.
     queries: {
       refetchOnWindowFocus: true,
-      refetchInterval: 8_000,
-      refetchIntervalInBackground: false,
-      staleTime: 5_000,
+      refetchOnReconnect: true,
+      refetchInterval: false,
+      staleTime: 30_000,
+      gcTime: 10 * 60_000,
       retry: 1,
     },
   },
   queryCache: new QueryCache({
     onError: (err, query) => {
-      // The build-watcher polls every 10s; a dead server there is expected and
-      // handled by reload, so it should not spam toasts.
-      if (query.queryKey[0] === "build") return;
+      // The two tiny watchers retry on their own; a dead server there should not
+      // produce a toast every few seconds.
+      if (query.queryKey[0] === "build" || query.queryKey[0] === "revision") return;
       report(err, "Couldn't load");
     },
   }),

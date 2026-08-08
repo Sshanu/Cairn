@@ -174,13 +174,42 @@ def uninstall() -> list[str]:
     return removed
 
 
-def status() -> dict[str, str]:
-    out = {}
-    for label in (SERVE_LABEL, POLL_LABEL, AUTOSAVE_LABEL, BACKUP_LABEL):
+# /api/settings reads this on every open, and the app used to poll settings on a
+# timer, so four *serial* `launchctl list` subprocesses (each able to hang) sat
+# directly on the request path -- the real reason "Loading backend settings…"
+# stalled. Probe the four labels concurrently, bound each with a timeout, and
+# cache the result briefly so repeated reads don't re-spawn subprocesses.
+_STATUS_CACHE: dict[str, object] = {"at": 0.0, "val": None}
+_STATUS_TTL = 5.0
+
+
+def _probe_label(label: str) -> str:
+    try:
         result = subprocess.run(
-            ["launchctl", "list", label], capture_output=True, text=True
+            ["launchctl", "list", label],
+            capture_output=True,
+            text=True,
+            timeout=2,
         )
-        out[label] = "loaded" if result.returncode == 0 else "not loaded"
+        return "loaded" if result.returncode == 0 else "not loaded"
+    except Exception:
+        # A timeout or a launchctl hiccup must not wedge the Settings request.
+        return "unknown"
+
+
+def status() -> dict[str, str]:
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    now = time.monotonic()
+    cached = _STATUS_CACHE["val"]
+    if isinstance(cached, dict) and now - float(_STATUS_CACHE["at"]) < _STATUS_TTL:
+        return cached
+    labels = (SERVE_LABEL, POLL_LABEL, AUTOSAVE_LABEL, BACKUP_LABEL)
+    with ThreadPoolExecutor(max_workers=len(labels)) as pool:
+        out = dict(zip(labels, pool.map(_probe_label, labels)))
+    _STATUS_CACHE["val"] = out
+    _STATUS_CACHE["at"] = now
     return out
 
 

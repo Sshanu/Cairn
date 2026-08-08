@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import {
   BookOpen, CalendarClock, Copy, Download, Layers, Moon, PanelLeftClose,
@@ -50,6 +50,52 @@ function useBuildWatcher() {
   }, [data?.build]);
 }
 
+const LIBRARY_QUERY_KEYS = new Set([
+  "stats",
+  "tags",
+  "items",
+  "browse-items",
+  "history",
+  "digest",
+  "map",
+  "item",
+  "related",
+  "dupes",
+  "triage",
+]);
+
+/** Notice extension/agent writes without polling every library endpoint.
+ *
+ * Invalidation deliberately uses refetchType "none": cached screens are marked
+ * stale, then React Query refreshes them on focus or the next mount while showing
+ * the cached result immediately. A long organizer job therefore cannot make the
+ * active screen refetch every few seconds.
+ */
+function useLibraryRevision() {
+  const queryClient = useQueryClient();
+  const seen = useRef<string | null>(null);
+  const { data } = useQuery({
+    queryKey: ["revision"],
+    queryFn: api.revision,
+    refetchInterval: 3_000,
+    refetchIntervalInBackground: false,
+    staleTime: 0,
+  });
+  useEffect(() => {
+    if (!data) return;
+    if (seen.current && seen.current !== data.revision) {
+      void queryClient.invalidateQueries({
+        predicate: (query) => {
+          const root = query.queryKey[0];
+          return typeof root === "string" && LIBRARY_QUERY_KEYS.has(root);
+        },
+        refetchType: "none",
+      });
+    }
+    seen.current = data.revision;
+  }, [data?.revision, queryClient]);
+}
+
 // Theme lives in ONE place: the settings store (tt-settings-v1). This header
 // toggle reads its initial state from there and writes back through save(), which
 // re-applies accent + dark class -- so the Settings page and this toggle can no
@@ -70,6 +116,7 @@ function useDarkMode() {
 
 export default function App() {
   useBuildWatcher();
+  useLibraryRevision();
   const [dark, setDark] = useDarkMode();
   const { width: sidebarWidth, onPointerDown: startResize, reset: resetSidebar } =
     usePaneWidth("tt-sidebar-w", 256, { min: 200, max: 640 });
