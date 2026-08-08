@@ -292,8 +292,13 @@ def capture_tab(
                 conn, saved.item_id, bibtex=entry, source="openreview",
                 venue=None, published=published,
             )
-    # Resolve full metadata off the request path, so the popup returns immediately.
-    background.add_task(_enrich_captured, saved.item_id)
+    # NOTE: do NOT resolve metadata here. It used to be a FastAPI BackgroundTask, but
+    # those share the SAME anyio threadpool that serves every sync request -- a blocking
+    # network meta.resolve() there starves the threads that serve /api/items,
+    # /api/settings, etc., making the WHOLE app crawl. The item keeps the metadata the
+    # extension already supplied; the poll process (off the web server) tags it and heals
+    # any missing title. Full metadata backfill is `tt backfill`, also off the server.
+    db.enqueue_for_tagging(conn, saved.item_id)
     return {"saved": True, "title": saved.title or title, "created": saved.created}
 
 
