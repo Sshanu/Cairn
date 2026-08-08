@@ -233,6 +233,13 @@ def poll() -> None:
     typer.echo(f"Recorded {count} tabs.")
     _drain_tag_queue(conn)
     _heal_titles(conn)
+    # Fully truncate the WAL each tick. A bloated WAL is what made the UI crawl; a
+    # TRUNCATE (unlike the passive auto-checkpoint) reclaims frames even after a reader
+    # briefly pinned it, keeping every read fast.
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except Exception as exc:
+        typer.echo(f"wal checkpoint skipped: {exc}")
 
 
 def _heal_titles(conn) -> None:

@@ -156,6 +156,12 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")  # wait, don't error, when another writer holds the lock
     conn.execute("PRAGMA foreign_keys=ON")
+    # Keep the WAL SMALL. The default auto-checkpoint is 1000 pages (~4MB); at that size
+    # every read has to scan the WAL (walFindFrame) and queries crawl -- this is what made
+    # the whole UI drag once the WAL bloated. Check-point far more often, and sync only at
+    # checkpoints (safe under WAL) so writes stay cheap.
+    conn.execute("PRAGMA wal_autocheckpoint=200")  # ~800KB, keeps reads fast
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(SCHEMA)
     migrate(conn)
     return conn
