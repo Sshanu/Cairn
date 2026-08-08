@@ -48,7 +48,12 @@ def serve_plist(port: int = 8765) -> dict:
         "KeepAlive": True,  # restart if it crashes or is killed
         "StandardErrorPath": "/tmp/cairn.serve.err",
         "StandardOutPath": "/tmp/cairn.serve.out",
-        "ProcessType": "Background",
+        # This process backs the interactive UI, so it MUST be Interactive.
+        # As "Background" macOS throttles its CPU and applies App Nap, which under
+        # any system load starved the server -- the SAME request that took ~3ms on
+        # a directly-run server took 200-3000ms here. Interactive gives it timeshare
+        # priority and exempts it from throttling.
+        "ProcessType": "Interactive",
         "EnvironmentVariables": {"PATH": _path_for_launchd()},
     }
 

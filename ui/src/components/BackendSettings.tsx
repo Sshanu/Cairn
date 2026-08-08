@@ -168,6 +168,10 @@ export function BackendSettings() {
   ];
   const provider = PROVIDERS.find((p) => p.id === draft.agent_provider) ?? PROVIDERS[0];
 
+  // Live "does my agent actually work?" check -- one tiny real call to the
+  // configured backend. Save first so it tests what's on screen, not the old config.
+  const test = useMutation({ mutationFn: api.agentTest });
+
   return (
     <div className="space-y-7">
       <div>
@@ -229,6 +233,38 @@ export function BackendSettings() {
           </div>
         )}
         {provider.note && <p className="mt-1.5 text-[11.5px] text-muted">{provider.note}</p>}
+        {provider.id !== "none" && (
+          <div className="mt-3">
+            <button
+              onClick={() => test.mutate()}
+              disabled={test.isPending}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1 text-[12px] text-muted hover:text-accent disabled:opacity-50"
+            >
+              {test.isPending ? (
+                <><Loader2 size={13} className="animate-spin" /> Testing…</>
+              ) : (
+                "Test agent"
+              )}
+            </button>
+            {test.data && (
+              <p
+                className={clsx(
+                  "mt-1.5 text-[12px]",
+                  test.data.ok ? "text-emerald-500" : "text-red-500",
+                )}
+              >
+                {test.data.ok
+                  ? `✓ ${test.data.name}/${test.data.model} replied in ${test.data.latency_ms} ms`
+                  : `✗ ${test.data.error ?? "no response"}`}
+              </p>
+            )}
+            {test.isError && (
+              <p className="mt-1.5 text-[12px] text-red-500">
+                ✗ {(test.error as Error)?.message ?? "request failed"}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <div>

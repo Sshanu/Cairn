@@ -10,6 +10,13 @@ session, plus what's still open. Grouped by area. Status legend:
 Companion reports: [`PERF_REPORT.md`](PERF_REPORT.md) (my analysis) and
 [`CODEX_PERF_REPORT.md`](CODEX_PERF_REPORT.md) (independent codex review).
 
+> **THE root cause (P14):** the residual slowness that survived every query fix was
+> the **launchd plist marking the server `ProcessType=Background`** — macOS throttled
+> its CPU (App Nap). Proof: the *same* request that took ~3ms on a directly-run server
+> took **226–2950ms** on the launchd-managed one, same machine, same moment. Changing
+> it to `Interactive` brought every read to **1–10ms**. The query refactor (P3–P12)
+> was still worth doing, but P14 was the dominant cause of the multi-second stalls.
+
 ---
 
 ## 0. Quick status table
@@ -18,19 +25,20 @@ Companion reports: [`PERF_REPORT.md`](PERF_REPORT.md) (my analysis) and
 |---|---|---|---|
 | P1 | WAL file bloated to 5.3 MB → every read scans it | Perf/DB | ✅ |
 | P2 | Background metadata enrich ran network calls in the web thread-pool → all endpoints stall | Perf/API | ✅ |
-| P3 | N+1: `item_tags()` per row (120-item page = 120 queries) | Perf/DB | 📋 |
-| P4 | Missing/defeated indexes (`saved_at`, `item_tags(tag_id,…)`, `COALESCE`) | Perf/DB | 📋 |
-| P5 | `/api/settings` runs 4 blocking `launchctl` subprocesses | Perf/API | 📋 |
-| P6 | DB migrations run on every per-thread connection | Perf/DB | 📋 |
-| P7 | Global 8s polling re-runs heavy `stats`/`tags`/`items` | Perf/UI | 📋 |
+| P3 | N+1: `item_tags()` per row (120-item page = 120 queries) | Perf/DB | ✅ |
+| P4 | Missing/defeated indexes (`saved_at`, `item_tags(tag_id,…)`, `COALESCE`) | Perf/DB | ✅ |
+| P5 | `/api/settings` runs 4 blocking `launchctl` subprocesses | Perf/API | ✅ |
+| P6 | DB migrations run on every per-thread connection | Perf/DB | ✅ |
+| P7 | Global 8s polling re-runs heavy `stats`/`tags`/`items` | Perf/UI | ✅ |
 | P8 | Poll tagging holds DB; reads wait up to `busy_timeout=5s` | Perf/DB | 📋 |
-| P9 | History returns all items for 30 days, N+1 serialized | Perf | 📋 |
-| P10 | `/api/stats` runs multiple whole-table counts + tag counts (hit on every mount + 8s poll) | Perf/API | 📋 |
-| P11 | `/api/items` always computes a full `total` count in addition to the page | Perf/API | 📋 |
-| P12 | `tag_tree()` scans **all** item/tag pairs + keeps per-ancestor sets in Python | Perf/DB | 📋 |
+| P9 | History returns all items for 30 days, N+1 serialized | Perf | ✅ |
+| P10 | `/api/stats` runs multiple whole-table counts + tag counts (hit on every mount + 8s poll) | Perf/API | ✅ |
+| P11 | `/api/items` always computes a full `total` count in addition to the page | Perf/API | ◐ mitigated (fast via P4; count still runs) |
+| P12 | `tag_tree()` scans **all** item/tag pairs + keeps per-ancestor sets in Python | Perf/DB | ✅ |
 | P13 | Backup `VACUUM INTO` + backfill/facet reindex lock the DB during UI use | Perf/DB | 📋 |
+| **P14** | **launchd serve plist was `ProcessType=Background` → macOS throttled the server (App Nap). THE root cause of the residual slowness** | Perf/launchd | ✅ |
 | S1 | Extension "Saving…" hangs forever (capture blocked on network) | Extension | ✅ |
-| S2 | Saved item didn't appear without manual refresh | Extension/UI | 🔧 |
+| S2 | Saved item didn't appear without manual refresh | Extension/UI | ✅ |
 | B1 | OpenReview metadata unfetchable (server Cloudflare-403) | BibTeX/Meta | ✅ |
 | B2 | Captured OpenReview BibTeX wiped by "Find BibTeX" | BibTeX | ✅ |
 | B3 | Collection BibTeX export was empty (stored-only) | BibTeX | ✅ |

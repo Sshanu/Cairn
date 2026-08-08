@@ -202,6 +202,14 @@ export const api = {
   build: () => req<{ build: string }>("/api/build"),
   revision: () =>
     req<{ revision: string }>("/api/revision", { cache: "no-store" }),
+  agentTest: () =>
+    req<{
+      ok: boolean;
+      name: string | null;
+      model: string | null;
+      latency_ms: number;
+      error: string | null;
+    }>("/api/agent/test", { method: "POST" }),
 
   stats: () => req<Stats>("/api/stats"),
 
