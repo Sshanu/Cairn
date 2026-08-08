@@ -11,7 +11,10 @@ echo "Cairn setup"
 echo "==========="
 
 # --- prerequisites ---------------------------------------------------------
-command -v npm >/dev/null 2>&1 || { echo "✗ npm not found — install Node 18+ (needed to build the UI)"; exit 1; }
+command -v node >/dev/null 2>&1 || { echo "✗ Node not found — install Node 18+ (https://nodejs.org, or: brew install node)"; exit 1; }
+command -v npm  >/dev/null 2>&1 || { echo "✗ npm not found — install Node 18+ (https://nodejs.org, or: brew install node)"; exit 1; }
+node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+[ "${node_major:-0}" -ge 18 ] || { echo "✗ Node 18+ required (found $(node -v)). Update Node and re-run ./install.sh"; exit 1; }
 
 # Find a Python 3.10+ interpreter. macOS ships 3.9 as `python3`, which is too old, so
 # also look for versioned binaries (python3.13 … python3.10) a newer install provides.
@@ -23,7 +26,7 @@ for cand in python3 python3.13 python3.12 python3.11 python3.10; do
   fi
 done
 if [ -z "$PYBIN" ]; then
-  have=$(python3 -V 2>&1 | awk '{print $2}')
+  have=$(command -v python3 >/dev/null 2>&1 && python3 -V 2>&1 | awk '{print $2}' || echo none)
   echo "✗ Cairn needs Python 3.10+ (found ${have:-none})."
   echo "  Install a newer Python and re-run ./install.sh, e.g.:"
   echo "      brew install python@3.12          # Homebrew"
@@ -50,7 +53,7 @@ python -m pip install --quiet -e ".[api,extract,web,embed]"
 echo "==> Building the web UI (first run downloads npm packages)"
 ( cd ui && npm install --no-audit --no-fund --silent && npm run build >/dev/null )
 
-# --- background agents -----------------------------------------------------
+# --- background agents + launch --------------------------------------------
 if [ "${CAIRN_NO_AGENTS:-0}" = "1" ]; then
   echo "==> Skipping background agents (CAIRN_NO_AGENTS=1)"
   echo
@@ -58,14 +61,28 @@ if [ "${CAIRN_NO_AGENTS:-0}" = "1" ]; then
 else
   echo "==> Installing & starting the background agents (serve · poll · autosave · backup)"
   tt autostart
+  # Confirm the server actually came up (launchd starts it in the background).
+  printf "==> Waiting for the server"
+  up=0
+  for _ in $(seq 1 30); do
+    if curl -s -m 4 -o /dev/null http://localhost:8765/api/stats 2>/dev/null; then up=1; break; fi
+    printf "."; sleep 1
+  done
   echo
-  echo "✅ Cairn is running:  http://localhost:8765"
+  if [ "$up" = "1" ]; then
+    echo "✅ Cairn is running:  http://localhost:8765"
+    command -v open >/dev/null 2>&1 && open http://localhost:8765 >/dev/null 2>&1 || true
+  else
+    echo "⚠️  Server hasn't answered yet. Check the log:  tail -n 40 /tmp/cairn.serve.err"
+    echo "    then restart it with:  tt autostart"
+  fi
 fi
 echo
-echo "Next:"
-echo "  • Open it, then Settings → Agent to pick a model backend (or None — search and"
-echo "    manual tagging work without one)."
-echo "  • Save from Chrome: open chrome://extensions, enable Developer mode, Load"
-echo "    unpacked ./extension, then press ⌘⇧E on any tab."
-echo "  • Tip: install the page as an app (Chrome ⋮ → Install page as app) for a window"
-echo "    of its own."
+echo "Next steps:"
+echo "  • Pick a model backend in Settings → Agent (or None — search + manual tagging"
+echo "    work without one; keys stay in ~/.cairn/config.json)."
+echo "  • Load the Chrome extension: chrome://extensions → Developer mode → Load unpacked"
+echo "    → the ./extension folder, then press ⌘⇧E on any tab to save it. (macOS may ask"
+echo "    to allow Chrome automation the first time autosave runs — approve it.)"
+echo "  • Optional: install the page as a Chrome app (⋮ → Install page as app) for its"
+echo "    own window."

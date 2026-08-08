@@ -89,7 +89,7 @@ class BaseBackend(ABC):
         try:
             self._invoke_json(
                 'Reply with a JSON object exactly: {"ok": true}',
-                schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+                schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"], "additionalProperties": False},
                 max_tokens=32,
                 timeout=45,
             )

@@ -320,6 +320,16 @@ def _enrich_captured(item_id: int) -> None:
             if fields:
                 _db.upsert_item(conn, row["canonical_url"], **fields)
                 _db.reindex_item(conn, item_id)
+                # venue/year may have only just arrived from resolve() -> (re)apply the
+                # URL-computed facets so venue/ tags aren't missing (codex review P2).
+                from . import taxonomy
+
+                fresh = _db.get_item(conn, item_id) or row
+                facets = taxonomy.computed_facets(
+                    fresh["canonical_url"], fresh["source"], fresh["venue"], fresh["year"]
+                )
+                if facets:
+                    _db.add_tags(conn, item_id, facets, origin="model")
                 log.info("enriched item %d: filled %s", item_id, ", ".join(sorted(fields)))
             else:
                 log.info("enrich item %d: nothing to add%s", item_id, f" ({err})" if err else "")
