@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -237,7 +237,11 @@ def _settings_view() -> dict:
 
 
 @app.post("/api/capture")
-def capture_tab(url: str, title: str = "", abstract: str = "", authors: str = "", bibtex: str = "", tags: str = "") -> dict:
+def capture_tab(
+    background: BackgroundTasks,
+    url: str, title: str = "", abstract: str = "", authors: str = "",
+    bibtex: str = "", tags: str = "",
+) -> dict:
     """Save one tab straight from the browser extension's "Save to Cairn" popup.
 
     The url + title come from the page itself, so -- unlike the old macOS Quick Action
@@ -250,11 +254,14 @@ def capture_tab(url: str, title: str = "", abstract: str = "", authors: str = ""
 
     conn = _conn()
     chosen = tuple(t.strip().rstrip("/") for t in tags.split(",") if t.strip())
-    # abstract/authors come from the extension scraping the loaded page -- the way to
-    # get metadata for a bot-protected site (OpenReview) the server can't fetch.
+    # fetch_meta=False: the extension already supplied the title (and usually the
+    # abstract/authors it scraped or resolved), so DON'T block the popup while the server
+    # re-fetches metadata over the network -- that round-trip is exactly what left the
+    # popup stuck on "Saving…". Save instantly; full metadata (abstract, body, venue,
+    # year) is filled in by a background task right after we respond.
     saved = capture_mod.save_url(
         conn, url, title=title or None, abstract=abstract or None,
-        authors=authors or None, fetch_meta=True, tags=chosen,
+        authors=authors or None, fetch_meta=False, tags=chosen,
     )
     if saved is None:
         return {"saved": False, "reason": "blocked or not a web page"}
@@ -278,7 +285,35 @@ def capture_tab(url: str, title: str = "", abstract: str = "", authors: str = ""
                 conn, saved.item_id, bibtex=entry, source="openreview",
                 venue=None, published=published,
             )
+    # Resolve full metadata off the request path, so the popup returns immediately.
+    background.add_task(_enrich_captured, saved.item_id)
     return {"saved": True, "title": saved.title or title, "created": saved.created}
+
+
+def _enrich_captured(item_id: int) -> None:
+    """After a fast capture, fill in metadata the extension didn't supply (abstract,
+    body, venue, year) over the network -- best-effort, off the request path so the
+    popup never waits. A bot-walled site (OpenReview) resolves to nothing and the
+    extension-provided fields simply stand."""
+    from . import db as _db, meta as _meta
+
+    try:
+        with _db.session() as conn:
+            row = _db.get_item(conn, item_id)
+            if row is None:
+                return
+            got = _meta.resolve(row["canonical_url"], row["raw_url"])
+            got.pop("_error", None)
+            fields = {
+                key: val
+                for key, val in got.items()
+                if val and key in ("title", "authors", "venue", "year", "abstract", "body")
+            }
+            if fields:
+                _db.upsert_item(conn, row["canonical_url"], **fields)
+                _db.reindex_item(conn, item_id)
+    except Exception:
+        pass  # the item is already saved; enrichment is a nicety
 
 
 @app.get("/api/lookup")

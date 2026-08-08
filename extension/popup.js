@@ -319,14 +319,13 @@ async function save() {
   }
   $("save").disabled = true;
   setStatus("Saving…", "muted");
-  // Metadata may still be loading in the background; wait for it (bounded -- the fetch
-  // has a 4s timeout) so a quick save still sends the real title/abstract.
+  // Wait for the background metadata, but only briefly -- never hang the save on it.
+  // If it isn't ready in time, save with the tab title and let the server fill the rest.
   if (metaPromise) {
-    try {
-      await metaPromise;
-    } catch {
-      /* fall back to tab.title below */
-    }
+    await Promise.race([
+      metaPromise.catch(() => {}),
+      new Promise((r) => setTimeout(r, 4000)),
+    ]);
   }
   // Prefer the fetched title/abstract/authors (real metadata even for a bot-protected
   // site); the abstract is capped so the request line stays sane.
@@ -345,7 +344,11 @@ async function save() {
     "&tags=" +
     encodeURIComponent(parts.join(","));
   try {
-    const res = await fetch(u, { method: "POST" });
+    // Bounded: a dead or wedged server must surface an error, not spin "Saving…" forever.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const res = await fetch(u, { method: "POST", signal: ctrl.signal });
+    clearTimeout(timer);
     const data = await res.json().catch(() => ({}));
     if (data.saved === false) {
       setStatus("Skipped: " + (data.reason || "blocked"), "err");
@@ -354,8 +357,13 @@ async function save() {
     }
     setStatus("Saved ✓" + (path ? " → " + path : ""), "ok");
     setTimeout(() => window.close(), 850);
-  } catch {
-    setStatus("Cairn isn't running — open the app.", "err");
+  } catch (e) {
+    setStatus(
+      e && e.name === "AbortError"
+        ? "Timed out — is Cairn running at localhost:8765?"
+        : "Cairn isn't running — open the app first.",
+      "err",
+    );
     $("save").disabled = false;
   }
 }
