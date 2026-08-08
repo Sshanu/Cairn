@@ -26,7 +26,6 @@ class BaseBackend(ABC):
         self.usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
         self.last_turn_usage: dict[str, int] = {}
 
-    @abstractmethod
     def invoke_json(
         self,
         prompt: str,
@@ -36,7 +35,74 @@ class BaseBackend(ABC):
         max_tokens: int = 2048,
         timeout: int | None = None,
     ) -> dict:
-        """Run the prompt and return a parsed JSON object."""
+        """Run the prompt and return a parsed JSON object.
+
+        Logs every call -- backend, model, latency, token usage, and any error -- so the
+        agent is visible in the terminal / serve log. Subclasses implement `_invoke_json`.
+        """
+        import time
+
+        from .. import logs
+
+        log = logs.get("agent")
+        started = time.monotonic()
+        try:
+            result = self._invoke_json(
+                prompt, schema=schema, system=system, max_tokens=max_tokens, timeout=timeout
+            )
+        except Exception as exc:
+            ms = (time.monotonic() - started) * 1000
+            log.warning(
+                "%s/%s FAILED after %.0fms: %s: %s",
+                self.name, self.model, ms, type(exc).__name__, exc,
+            )
+            raise
+        ms = (time.monotonic() - started) * 1000
+        u = self.last_turn_usage or {}
+        log.info(
+            "%s/%s ok in %.0fms (in≈%s out≈%s tok)",
+            self.name, self.model, ms, u.get("input_tokens", "?"), u.get("output_tokens", "?"),
+        )
+        return result
+
+    @abstractmethod
+    def _invoke_json(
+        self,
+        prompt: str,
+        *,
+        schema: dict | None = None,
+        system: str | None = None,
+        max_tokens: int = 2048,
+        timeout: int | None = None,
+    ) -> dict:
+        """Run the prompt and return a parsed JSON object. Implemented per backend."""
+
+    def health_check(self) -> dict:
+        """A tiny live call to confirm the backend actually works -- used by the Settings
+        'Test agent' button, and logged. Returns {ok, name, model, latency_ms, error}."""
+        import time
+
+        from .. import logs
+
+        log = logs.get("agent")
+        started = time.monotonic()
+        try:
+            self._invoke_json(
+                'Reply with a JSON object exactly: {"ok": true}',
+                schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+                max_tokens=32,
+                timeout=45,
+            )
+            ms = int((time.monotonic() - started) * 1000)
+            log.info("health check OK: %s/%s in %dms", self.name, self.model, ms)
+            return {"ok": True, "name": self.name, "model": self.model, "latency_ms": ms, "error": None}
+        except Exception as exc:
+            ms = int((time.monotonic() - started) * 1000)
+            log.warning("health check FAILED: %s/%s: %s: %s", self.name, self.model, type(exc).__name__, exc)
+            return {
+                "ok": False, "name": self.name, "model": self.model,
+                "latency_ms": ms, "error": f"{type(exc).__name__}: {exc}",
+            }
 
     def close(self) -> None:  # pragma: no cover - most backends are stateless
         return None

@@ -38,7 +38,7 @@ class OpenAICompatBackend(BaseBackend):
         # process on the first rejection rather than per request.
         self._structured_output = True
 
-    def invoke_json(
+    def _invoke_json(
         self,
         prompt: str,
         *,

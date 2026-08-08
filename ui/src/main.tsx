@@ -32,10 +32,17 @@ function report(err: unknown, kind: string) {
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    // Refetch when the window regains focus: after saving a tab from the browser
-    // extension (an out-of-band write) and switching back, the sidebar counts and the
-    // item list update on their own instead of needing a manual refresh.
-    queries: { refetchOnWindowFocus: true, staleTime: 5_000, retry: 1 },
+    // Keep the app live without a manual refresh. Saving from the extension is an
+    // out-of-band write, so: refetch on focus (switching back to the app), AND poll
+    // every 8s while the tab is visible -- the latter covers Cairn running in its own
+    // window that never gets "focused" when you save from another Chrome window.
+    queries: {
+      refetchOnWindowFocus: true,
+      refetchInterval: 8_000,
+      refetchIntervalInBackground: false,
+      staleTime: 5_000,
+      retry: 1,
+    },
   },
   queryCache: new QueryCache({
     onError: (err, query) => {

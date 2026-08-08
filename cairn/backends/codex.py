@@ -34,6 +34,29 @@ from .base import BackendError, BaseBackend, parse_json_object
 DEFAULT_MODEL_SENTINELS = frozenset({"default", "codex-default", "codex"})
 
 
+def _strict_schema(schema: dict) -> dict:
+    """Make a JSON Schema valid for OpenAI structured output (what codex-cli 0.143+
+    enforces): every object must set additionalProperties:false and list ALL of its
+    properties in `required`. Applied recursively on a copy, so the caller's schema is
+    untouched. Without this, codex rejects the call with 'invalid_json_schema'."""
+    import copy
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "object" and isinstance(node.get("properties"), dict):
+                node["additionalProperties"] = False
+                node["required"] = list(node["properties"].keys())
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    clone = copy.deepcopy(schema)
+    walk(clone)
+    return clone
+
+
 class CodexExecBackend(BaseBackend):
     name = "codex"
 
@@ -111,7 +134,7 @@ class CodexExecBackend(BaseBackend):
             delay = min(delay * 2, 120)
         return False
 
-    def invoke_json(
+    def _invoke_json(
         self,
         prompt: str,
         *,
@@ -178,7 +201,7 @@ class CodexExecBackend(BaseBackend):
             command += ["--output-last-message", str(message_path)]
             if schema and self.supports_output_schema(self.executable):
                 schema_path = Path(tmp) / "schema.json"
-                schema_path.write_text(json.dumps(schema), encoding="utf-8")
+                schema_path.write_text(json.dumps(_strict_schema(schema)), encoding="utf-8")
                 command += ["--output-schema", str(schema_path)]
             command.append(prompt)
 

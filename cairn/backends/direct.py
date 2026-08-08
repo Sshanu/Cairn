@@ -43,7 +43,7 @@ class DirectBackend(BaseBackend):
             self._client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
         return self._client
 
-    def invoke_json(
+    def _invoke_json(
         self,
         prompt: str,
         *,

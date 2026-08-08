@@ -924,6 +924,10 @@ def serve(
     if not (DIST / "index.html").exists():
         _fail("the UI is not built yet. Run:  cd ui && npm install && npm run build")
 
+    from . import logs
+
+    log = logs.get("serve")
+    log.info("starting on http://%s:%d  (db %s)", host, port, config.db_path())
     typer.secho(f"cairn UI on http://{host}:{port}", fg=typer.colors.GREEN)
     uvicorn.run(web_app, host=host, port=port, log_level="warning")
 

@@ -250,8 +250,9 @@ def capture_tab(
     plus any extra tags, applied as manual tags. Query params keep it a simple
     cross-origin request. Blocked/never-store URLs are rejected like any other save.
     """
-    from . import capture as capture_mod, taxonomy
+    from . import capture as capture_mod, logs, taxonomy
 
+    log = logs.get("capture")
     conn = _conn()
     chosen = tuple(t.strip().rstrip("/") for t in tags.split(",") if t.strip())
     # fetch_meta=False: the extension already supplied the title (and usually the
@@ -264,7 +265,13 @@ def capture_tab(
         authors=authors or None, fetch_meta=False, tags=chosen,
     )
     if saved is None:
+        log.info("rejected (blocked / not a web page): %s", url)
         return {"saved": False, "reason": "blocked or not a web page"}
+    log.info(
+        "saved item %d (%s) <- %s%s",
+        saved.item_id, "new" if saved.created else "update", url,
+        (" filed: " + ", ".join(chosen)) if chosen else "",
+    )
     # URL-computed facets now, so it's browsable immediately; model tagging happens on
     # the next organize cycle.
     row = db.get_item(conn, saved.item_id)
@@ -295,15 +302,16 @@ def _enrich_captured(item_id: int) -> None:
     body, venue, year) over the network -- best-effort, off the request path so the
     popup never waits. A bot-walled site (OpenReview) resolves to nothing and the
     extension-provided fields simply stand."""
-    from . import db as _db, meta as _meta
+    from . import db as _db, logs, meta as _meta
 
+    log = logs.get("capture")
     try:
         with _db.session() as conn:
             row = _db.get_item(conn, item_id)
             if row is None:
                 return
             got = _meta.resolve(row["canonical_url"], row["raw_url"])
-            got.pop("_error", None)
+            err = got.pop("_error", None)
             fields = {
                 key: val
                 for key, val in got.items()
@@ -312,8 +320,11 @@ def _enrich_captured(item_id: int) -> None:
             if fields:
                 _db.upsert_item(conn, row["canonical_url"], **fields)
                 _db.reindex_item(conn, item_id)
-    except Exception:
-        pass  # the item is already saved; enrichment is a nicety
+                log.info("enriched item %d: filled %s", item_id, ", ".join(sorted(fields)))
+            else:
+                log.info("enrich item %d: nothing to add%s", item_id, f" ({err})" if err else "")
+    except Exception as exc:  # the item is already saved; enrichment is a nicety
+        log.warning("enrich item %d failed: %s: %s", item_id, type(exc).__name__, exc)
 
 
 @app.get("/api/lookup")
@@ -374,6 +385,21 @@ def list_branches() -> dict:
             if r["name"].split("/")[0] not in skip
         ]
     }
+
+
+@app.post("/api/agent/test")
+def agent_test() -> dict:
+    """Live-test the configured model backend (codex / claude / openai / ollama): make a
+    tiny real call and report whether it works. Backs the Settings 'Test agent' button,
+    and every call is logged so a failure shows up in the terminal / serve log too."""
+    from . import logs
+
+    try:
+        backend = get_backend()
+    except Exception as exc:
+        logs.get("agent").warning("no working backend: %s: %s", type(exc).__name__, exc)
+        return {"ok": False, "name": None, "model": None, "latency_ms": 0, "error": str(exc)}
+    return backend.health_check()
 
 
 @app.get("/api/settings")
