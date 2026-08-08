@@ -130,6 +130,11 @@ export function BackendSettings() {
     },
   });
 
+  // Live "does my agent actually work?" check -- one tiny real call to the
+  // configured backend. MUST stay above the early return below, or it becomes a
+  // conditional hook (crashes the page once settings finish loading).
+  const test = useMutation({ mutationFn: api.agentTest });
+
   if (isLoading || !draft) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted">
@@ -167,10 +172,6 @@ export function BackendSettings() {
     { id: "none", label: "No agent", needsKey: false, note: "organising / Ask / summaries off" },
   ];
   const provider = PROVIDERS.find((p) => p.id === draft.agent_provider) ?? PROVIDERS[0];
-
-  // Live "does my agent actually work?" check -- one tiny real call to the
-  // configured backend. Save first so it tests what's on screen, not the old config.
-  const test = useMutation({ mutationFn: api.agentTest });
 
   return (
     <div className="space-y-7">
