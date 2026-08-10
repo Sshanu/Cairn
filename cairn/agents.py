@@ -146,8 +146,41 @@ def apply_schedule() -> dict[str, str]:
 
 
 def _path_for_launchd() -> str:
-    """launchd starts with a bare PATH; codex and node live in homebrew."""
-    return "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    """launchd starts with a bare PATH, but codex/node may live anywhere (homebrew,
+    npm-global, volta, nvm, ~/.local/bin, a custom dir). Build a PATH that finds them:
+    the dir of a user-set codex path first, then common install locations, then the
+    PATH of whoever ran `tt autostart` (that shell already found codex to run this),
+    then the system defaults. De-duplicated, order preserved."""
+    import os
+    from pathlib import Path
+
+    from . import config
+
+    home = Path.home()
+    parts: list[str] = []
+    codex = config.codex_path()
+    if codex:
+        parts.append(str(Path(codex).expanduser().resolve().parent))
+    parts += [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        str(home / ".local/bin"),
+        str(home / ".volta/bin"),
+        str(home / ".npm-global/bin"),
+        str(home / ".cargo/bin"),
+        str(home / ".deno/bin"),
+    ]
+    # Inherit the installing shell's PATH -- the single most reliable way to capture a
+    # non-standard codex/node location, since that shell just ran this successfully.
+    parts += os.environ.get("PATH", "").split(":")
+    parts += ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return ":".join(out)
 
 
 def install(

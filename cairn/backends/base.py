@@ -179,7 +179,9 @@ def get_backend(
     if name == "codex":
         from .codex import CodexExecBackend
 
-        return CodexExecBackend(model, reasoning_effort=effort)
+        return CodexExecBackend(
+            model, reasoning_effort=effort, executable=config.codex_path() or "codex"
+        )
     if name in ("openai", "ollama", "openai-compat"):
         from .openai_compat import OpenAICompatBackend
 

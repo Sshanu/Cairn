@@ -234,6 +234,14 @@ export function BackendSettings() {
           </div>
         )}
         {provider.note && <p className="mt-1.5 text-[11.5px] text-muted">{provider.note}</p>}
+        {provider.id === "codex" && (
+          <p className="mt-1 text-[11.5px] text-muted">
+            Needs the codex CLI (v0.143+) on your PATH. Installed elsewhere? Set it with{" "}
+            <code className="rounded bg-line/40 px-1">tt config --codex-path /path/to/codex</code>{" "}
+            (or the <code className="rounded bg-line/40 px-1">CAIRN_CODEX_PATH</code> env var),
+            then re-run <code className="rounded bg-line/40 px-1">./install.sh</code>.
+          </p>
+        )}
         {provider.id !== "none" && (
           <div className="mt-3">
             <button
@@ -257,6 +265,16 @@ export function BackendSettings() {
                 {test.data.ok
                   ? `✓ ${test.data.name}/${test.data.model} replied in ${test.data.latency_ms} ms`
                   : `✗ ${test.data.error ?? "no response"}`}
+              </p>
+            )}
+            {/* Transparency: show the detected codex CLI + version + where it lives. */}
+            {test.data?.codex_version !== undefined && (
+              <p className="mt-1 text-[11.5px] text-muted">
+                codex {test.data.codex_version ?? "not found"}
+                {test.data.codex_min_version && ` (Cairn needs v${test.data.codex_min_version}+)`}
+                {test.data.codex_path && ` · ${test.data.codex_path}`}
+                {test.data.supports_output_schema === false &&
+                  " · ⚠️ this version lacks --output-schema; upgrade codex"}
               </p>
             )}
             {test.isError && (

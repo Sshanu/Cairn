@@ -82,6 +82,13 @@ def agent_base_url() -> str | None:
     return _setting("CAIRN_AGENT_BASE_URL", "agent_base_url")
 
 
+def codex_path() -> str | None:
+    """Full path to the `codex` binary, for when it isn't on the default PATH (a
+    non-standard install, nvm/volta/npm-global, etc.). Set with CAIRN_CODEX_PATH or
+    `tt config --codex-path /full/path/to/codex`. Empty -> found on PATH by name."""
+    return _setting("CAIRN_CODEX_PATH", "codex_path")
+
+
 def reasoning_effort() -> str | None:
     """Passed through to codex as -c model_reasoning_effort=<value>."""
     return _setting("CAIRN_REASONING", "reasoning_effort")

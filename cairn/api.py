@@ -9,6 +9,7 @@ Everything stays local: bound to 127.0.0.1, no auth, no deployment.
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import threading
 import uuid
@@ -30,6 +31,23 @@ from .backends.base import get_backend
 DIST = Path(__file__).parent / "static"
 
 app = FastAPI(title="cairn", docs_url="/api/docs", redoc_url=None)
+
+
+@app.exception_handler(Exception)
+async def _log_unhandled(request, exc):
+    """Any error that escapes an endpoint is logged with its FULL traceback (so it
+    shows up in /tmp/cairn.serve.err or the terminal), and the real type/message is
+    returned to the caller instead of a blank 'Internal Server Error'. This is what
+    lets anyone read the log and see exactly what broke, on any machine."""
+    from . import logs
+
+    logs.get("api").exception(
+        "unhandled error on %s %s", request.method, request.url.path
+    )
+    return JSONResponse(
+        {"error": f"{type(exc).__name__}: {exc}", "path": request.url.path},
+        status_code=500,
+    )
 
 
 _conn_local = threading.local()
@@ -448,7 +466,18 @@ def agent_test() -> dict:
     except Exception as exc:
         logs.get("agent").warning("no working backend: %s: %s", type(exc).__name__, exc)
         return {"ok": False, "name": None, "model": None, "latency_ms": 0, "error": str(exc)}
-    return backend.health_check()
+    result = backend.health_check()
+    # Transparency: for codex, report the detected CLI version, the minimum Cairn
+    # needs, and whether structured output is available -- all visible in Settings.
+    if getattr(backend, "name", "") == "codex":
+        from .backends.codex import CodexExecBackend
+
+        exe = getattr(backend, "executable", "codex")
+        result["codex_path"] = shutil.which(exe) or config.codex_path() or exe
+        result["codex_version"] = CodexExecBackend.installed_version(exe)
+        result["codex_min_version"] = CodexExecBackend.MIN_VERSION
+        result["supports_output_schema"] = CodexExecBackend.supports_output_schema(exe)
+    return result
 
 
 @app.get("/api/settings")

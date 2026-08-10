@@ -81,6 +81,22 @@ class CodexExecBackend(BaseBackend):
 
     # -- capability probe -----------------------------------------------------
 
+    # codex-cli added `--output-schema` (structured JSON output, which Cairn's
+    # tagging/organizing relies on) in 0.143. Older CLIs still "work" but fall back
+    # to free-form parsing, so we surface the version + this floor in the UI.
+    MIN_VERSION = "0.143"
+
+    @classmethod
+    def installed_version(cls, executable: str = "codex") -> str | None:
+        """The `codex --version` string, or None if codex can't be run."""
+        try:
+            result = subprocess.run(
+                [executable, "--version"], capture_output=True, text=True, timeout=10
+            )
+            return (result.stdout + result.stderr).strip() or None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
     @classmethod
     def supports_output_schema(cls, executable: str = "codex") -> bool:
         if cls._schema_support is None:
@@ -144,7 +160,13 @@ class CodexExecBackend(BaseBackend):
         timeout: int | None = None,
     ) -> dict:
         if shutil.which(self.executable) is None:
-            raise BackendError(f"{self.executable!r} is not on PATH")
+            raise BackendError(
+                f"{self.executable!r} is not on PATH. Install the codex CLI "
+                f"(v{self.MIN_VERSION}+), or if it lives in a non-standard location set "
+                f"its full path with:  tt config --codex-path /full/path/to/codex  "
+                f"(or the CAIRN_CODEX_PATH env var), then rerun ./install.sh so the "
+                f"background agents pick it up."
+            )
 
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
         last_error: Exception | None = None

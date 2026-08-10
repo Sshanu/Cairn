@@ -209,6 +209,10 @@ export const api = {
       model: string | null;
       latency_ms: number;
       error: string | null;
+      codex_path?: string | null;
+      codex_version?: string | null;
+      codex_min_version?: string;
+      supports_output_schema?: boolean;
     }>("/api/agent/test", { method: "POST" }),
 
   stats: () => req<Stats>("/api/stats"),

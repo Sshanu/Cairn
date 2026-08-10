@@ -921,22 +921,42 @@ def serve(
     port: int = typer.Option(8765, "--port"),
 ) -> None:
     """Run the local web UI. Bound to localhost, no auth, no deployment."""
+    import platform
+
+    from . import logs
+
+    log = logs.get("serve")
+    # Log the environment up front: when a server won't start on someone else's
+    # machine, the first thing anyone needs is the Python/OS/paths it's running with.
+    log.info(
+        "cairn serve booting | python %s | %s | db %s",
+        platform.python_version(), platform.platform(), config.db_path(),
+    )
     try:
         import uvicorn
     except ImportError:
         _fail("the web UI needs extra deps: pip install -e '.[web]'")
 
-    from .api import DIST, app as web_app
+    # Importing the app pulls in every dependency; if one is missing or broken on this
+    # machine, log the FULL traceback (not a swallowed one) so it's debuggable directly.
+    try:
+        from .api import DIST, app as web_app
+    except Exception:
+        log.exception("FAILED TO IMPORT THE APP — a dependency is likely missing/broken")
+        raise
 
     if not (DIST / "index.html").exists():
         _fail("the UI is not built yet. Run:  cd ui && npm install && npm run build")
 
-    from . import logs
-
-    log = logs.get("serve")
-    log.info("starting on http://%s:%d  (db %s)", host, port, config.db_path())
+    log.info("starting on http://%s:%d", host, port)
     typer.secho(f"cairn UI on http://{host}:{port}", fg=typer.colors.GREEN)
-    uvicorn.run(web_app, host=host, port=port, log_level="warning")
+    try:
+        uvicorn.run(web_app, host=host, port=port, log_level="warning")
+    except Exception:
+        # e.g. "Address already in use" (port taken) or a bind/permission error --
+        # make it unmistakable in the log instead of a bare stack trace.
+        log.exception("SERVER FAILED TO START on %s:%d", host, port)
+        raise
 
 
 @app.command(name="config")
@@ -946,12 +966,15 @@ def config_cmd(
     reasoning: Optional[str] = typer.Option(None, "--reasoning", help="low|medium|high|xhigh"),
     ask_model: Optional[str] = typer.Option(None, "--ask-model"),
     ask_reasoning: Optional[str] = typer.Option(None, "--ask-reasoning"),
+    codex_path: Optional[str] = typer.Option(
+        None, "--codex-path", help="Full path to the codex binary if it isn't on PATH."
+    ),
     show: bool = typer.Option(False, "--show", help="Print the current settings."),
 ) -> None:
     """Store settings so every surface works without exported env vars."""
     from . import config as cfg
 
-    if show or not any([backend, model, reasoning, ask_model, ask_reasoning]):
+    if show or not any([backend, model, reasoning, ask_model, ask_reasoning, codex_path]):
         current = cfg.load()
         typer.echo(f"config: {cfg.config_path()}")
         for key, value in (current or {"(empty)": ""}).items():
@@ -961,8 +984,11 @@ def config_cmd(
 
     saved = cfg.save(
         backend=backend, model=model, reasoning_effort=reasoning,
-        ask_model=ask_model, ask_reasoning_effort=ask_reasoning,
+        ask_model=ask_model, ask_reasoning_effort=ask_reasoning, codex_path=codex_path,
     )
+    if codex_path:
+        typer.echo("Re-run ./install.sh (or `tt autostart`) so the background agents "
+                   "pick up the new codex path.")
     typer.echo(f"Saved to {cfg.config_path()}")
     for key, value in saved.items():
         typer.echo(f"  {key:<22} {value}")
