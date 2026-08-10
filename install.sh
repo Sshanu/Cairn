@@ -61,10 +61,12 @@ if [ "${CAIRN_NO_AGENTS:-0}" = "1" ]; then
 else
   echo "==> Installing & starting the background agents (serve · poll · autosave · backup)"
   tt autostart
-  # Confirm the server actually came up (launchd starts it in the background).
-  printf "==> Waiting for the server"
+  # Confirm the server actually came up (launchd starts it in the background). The
+  # FIRST boot on a fresh machine imports the whole scientific stack cold, so give
+  # it a generous window before deciding something is wrong.
+  printf "==> Waiting for the server (first cold start can take up to a minute)"
   up=0
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 90); do
     if curl -s -m 4 -o /dev/null http://localhost:8765/api/stats 2>/dev/null; then up=1; break; fi
     printf "."; sleep 1
   done
@@ -73,8 +75,31 @@ else
     echo "✅ Cairn is running:  http://localhost:8765"
     command -v open >/dev/null 2>&1 && open http://localhost:8765 >/dev/null 2>&1 || true
   else
-    echo "⚠️  Server hasn't answered yet. Check the log:  tail -n 40 /tmp/cairn.serve.err"
-    echo "    then restart it with:  tt autostart"
+    # Don't just point at a log the user then has to go read -- SHOW it, and run a
+    # one-off foreground boot on a spare port to surface the real Python error
+    # (launchd can swallow a traceback; a direct run prints it).
+    echo "⚠️  The server didn't answer in 90s. Its launchd log (/tmp/cairn.serve.err):"
+    echo "    ----------------------------------------------------------------"
+    tail -n 25 /tmp/cairn.serve.err 2>/dev/null | sed 's/^/    /' || echo "    (no log at /tmp/cairn.serve.err yet)"
+    echo "    ----------------------------------------------------------------"
+    echo "==> Trying a one-off direct boot on port 8766 to surface any startup error…"
+    tt serve --port 8766 >/tmp/cairn.diagnose.log 2>&1 &
+    diagpid=$!
+    diag_up=0
+    for _ in $(seq 1 60); do
+      if curl -s -m 4 -o /dev/null http://localhost:8766/api/stats 2>/dev/null; then diag_up=1; break; fi
+      sleep 1
+    done
+    if [ "$diag_up" = "1" ]; then
+      echo "    ✓ A direct boot WORKS — the app is fine; launchd was just slow to start it."
+      echo "      Reload http://localhost:8765 in ~30s, or run:  tt autostart"
+    else
+      echo "    ✗ The direct boot also failed. The actual error is below — send this:"
+      echo "    ----------------------------------------------------------------"
+      tail -n 30 /tmp/cairn.diagnose.log 2>/dev/null | sed 's/^/    /'
+      echo "    ----------------------------------------------------------------"
+    fi
+    kill "$diagpid" 2>/dev/null || true
   fi
 fi
 echo
