@@ -99,6 +99,7 @@ export type ServerSettings = {
   agent_provider: string;
   agent_model: string;
   agent_base_url: string;
+  agent_codex_path: string;
   agent_api_key_set: boolean;
   agent_api_key?: string; // write-only
   reasoning_effort: string;

@@ -235,12 +235,19 @@ export function BackendSettings() {
         )}
         {provider.note && <p className="mt-1.5 text-[11.5px] text-muted">{provider.note}</p>}
         {provider.id === "codex" && (
-          <p className="mt-1 text-[11.5px] text-muted">
-            Needs the codex CLI (v0.143+) on your PATH. Installed elsewhere? Set it with{" "}
-            <code className="rounded bg-line/40 px-1">tt config --codex-path /path/to/codex</code>{" "}
-            (or the <code className="rounded bg-line/40 px-1">CAIRN_CODEX_PATH</code> env var),
-            then re-run <code className="rounded bg-line/40 px-1">./install.sh</code>.
-          </p>
+          <>
+            <input
+              value={draft.agent_codex_path ?? ""}
+              onChange={(e) => set({ agent_codex_path: e.target.value })}
+              placeholder="codex path (optional — leave blank to find it on PATH)"
+              className={clsx(input, "mt-2 max-w-md font-mono text-[12px]")}
+            />
+            <p className="mt-1 text-[11.5px] text-muted">
+              Needs the codex CLI (v0.143+). Leave blank to use the one on your PATH; set a
+              full path here only if codex is installed somewhere non-standard. Applies to
+              background tagging too — no reinstall needed.
+            </p>
+          </>
         )}
         {provider.id !== "none" && (
           <div className="mt-3">

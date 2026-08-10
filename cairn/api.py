@@ -237,6 +237,7 @@ class SettingsPatch(BaseModel):
     agent_model: str | None = None
     agent_base_url: str | None = None
     agent_api_key: str | None = None
+    agent_codex_path: str | None = None
     reasoning_effort: str | None = None
     tracking_paused: bool | None = None
 
@@ -281,6 +282,7 @@ def _settings_view() -> dict:
         "agent_provider": config.backend_name(),
         "agent_model": config.load().get("model") or "",
         "agent_base_url": config.agent_base_url() or "",
+        "agent_codex_path": config.codex_path() or "",
         "agent_api_key_set": bool(config.agent_api_key()),  # never return the key itself
         "reasoning_effort": config.reasoning_effort() or "",
         "tracking_paused": config.tracking_paused(),
@@ -497,6 +499,7 @@ def put_settings(patch: SettingsPatch) -> dict:
         ("agent_provider", "backend"),
         ("agent_model", "model"),
         ("agent_api_key", "api_key"),
+        ("agent_codex_path", "codex_path"),
     ):
         if ui_key in values:
             values[cfg_key] = values.pop(ui_key).strip()
