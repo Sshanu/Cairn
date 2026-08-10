@@ -46,6 +46,11 @@ def serve_plist(port: int = 8765) -> dict:
         "ProgramArguments": [str(_tt_path()), "serve", "--port", str(port)],
         "RunAtLoad": True,
         "KeepAlive": True,  # restart if it crashes or is killed
+        # launchd's default respawn throttle is 10s, so after any restart (crash,
+        # laptop wake, upgrade) the UI was dead for ~10s and showed "Loading…". The
+        # server boots in well under a second; a 1s throttle keeps the crash-loop
+        # backstop while making restarts feel instant.
+        "ThrottleInterval": 1,
         "StandardErrorPath": "/tmp/cairn.serve.err",
         "StandardOutPath": "/tmp/cairn.serve.out",
         # This process backs the interactive UI, so it MUST be Interactive.
