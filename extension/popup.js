@@ -8,6 +8,20 @@ let tab = null;
 let META = {}; // {title, abstract, authors} scraped from the loaded page
 let metaPromise = null; // in-flight metadata load; save() awaits it so a fast click still sends it
 
+// Every network call is bounded: a restarting or wedged server must never leave the
+// popup hanging (that was the "takes a minute to load" -- a fetch with no timeout will
+// sit on a half-open localhost socket for ~60s). Short timeout, throws on expiry.
+async function fetchJSON(path, ms = 3000, opts = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(API + path, { ...opts, signal: ctrl.signal });
+    return await r.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Read metadata straight from the loaded page. The Cairn server can't fetch a
 // bot-protected site (OpenReview sits behind a Cloudflare wall), but the browser has
 // already rendered it -- so the paper's citation_* meta tags are right here to hand over.
@@ -167,10 +181,20 @@ function render() {
     ? ALL.filter((n) => n.toLowerCase().includes(fl))
         .slice(0, 60)
         .map((n) => ({ full: n, label: n, leaf: !hasKids(n) }))
-    : childrenOf(path).map((seg) => {
-        const full = path ? path + "/" + seg : seg;
-        return { full, label: seg, leaf: !hasKids(full) };
-      });
+    : (() => {
+        const segs = childrenOf(path);
+        // Always offer "collection" and "project" at the top level, even with none yet,
+        // so making your FIRST collection is possible: drill in, then type a name ->
+        // collection/<name>. (Typing a bare name at the top would make a loose tag, not
+        // a collection -- this is what makes the right prefix discoverable.)
+        if (!path) for (const root of ["collection", "project"]) if (!segs.includes(root)) segs.push(root);
+        segs.sort();
+        return segs.map((seg) => {
+          const full = path ? path + "/" + seg : seg;
+          const forcedFolder = !path && (seg === "collection" || seg === "project");
+          return { full, label: seg, leaf: forcedFolder ? false : !hasKids(full) };
+        });
+      })();
   for (const r of rows) {
     const row = document.createElement("div");
     row.className = "row";
@@ -261,13 +285,26 @@ async function init() {
   $("save").addEventListener("click", save);
   $("tags").addEventListener("keydown", (e) => e.key === "Enter" && save());
 
-  // Branches drive the picker; localhost, ~5ms. Render as soon as they arrive.
+  // Branches drive the picker. Render INSTANTLY from the last cached list so the popup
+  // is never blank while the server answers (or if it's mid-restart), then refresh in
+  // the background with a hard timeout.
   try {
-    ALL = (await (await fetch(API + "/api/branches")).json()).branches || [];
+    const cached = (await chrome.storage.local.get("branches")).branches;
+    if (Array.isArray(cached) && cached.length) ALL = cached;
   } catch {
-    setStatus("Cairn isn't running — open the app first.", "err");
+    /* no cache yet */
   }
   render();
+  try {
+    const fresh = (await fetchJSON("/api/branches", 3000)).branches;
+    if (Array.isArray(fresh)) {
+      ALL = fresh;
+      chrome.storage.local.set({ branches: fresh });
+      render();
+    }
+  } catch {
+    if (!ALL.length) setStatus("Cairn isn't running — open the app first.", "err");
+  }
 
   // Enrichment runs in the BACKGROUND so a slow network round-trip (OpenReview's API)
   // never delays the popup. The title updates when metadata lands; save() awaits the
@@ -288,7 +325,9 @@ async function loadMeta() {
   // This is what puts the real title in the popup for a PDF instead of the file name.
   if (!META || !META.title) {
     try {
-      const d = await (await fetch(API + "/api/resolve?url=" + encodeURIComponent(tab.url))).json();
+      // /api/resolve fetches the page server-side (network), so give it longer -- but
+      // still bounded so it can't hang the save's metadata wait forever.
+      const d = await fetchJSON("/api/resolve?url=" + encodeURIComponent(tab.url), 8000);
       if (d && d.title) META = { title: d.title, abstract: d.abstract || "", authors: d.authors || "" };
     } catch {
       /* offline or not resolvable -- fall back to the tab title */
@@ -299,7 +338,7 @@ async function loadMeta() {
 
 async function loadExisting() {
   try {
-    const d = await (await fetch(API + "/api/lookup?url=" + encodeURIComponent(tab.url))).json();
+    const d = await fetchJSON("/api/lookup?url=" + encodeURIComponent(tab.url), 3000);
     if (d && d.exists) renderExisting(d);
   } catch {
     /* offline / server down -- already surfaced by the branches fetch */
