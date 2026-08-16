@@ -33,6 +33,27 @@ DIST = Path(__file__).parent / "static"
 app = FastAPI(title="cairn", docs_url="/api/docs", redoc_url=None)
 
 
+@app.middleware("http")
+async def _log_requests(request, call_next):
+    """Log every /api/ request with its duration, so the extension's and UI's calls are
+    visible and timed in /tmp/cairn.serve.err -- the way to see WHICH request an action
+    actually spent time on, on any machine. Slow ones (>=1s) are warnings so they stand
+    out. This is the extension's request log."""
+    import time
+
+    from . import logs
+
+    start = time.monotonic()
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/api/"):
+        ms = (time.monotonic() - start) * 1000
+        q = ("?" + request.url.query.split("&")[0]) if request.url.query else ""
+        line = ("%s %s%s -> %s in %.0fms", request.method, path, q, response.status_code, ms)
+        (logs.get("http").warning if ms >= 1000 else logs.get("http").info)(*line)
+    return response
+
+
 @app.exception_handler(Exception)
 async def _log_unhandled(request, exc):
     """Any error that escapes an endpoint is logged with its FULL traceback (so it
