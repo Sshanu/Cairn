@@ -310,30 +310,33 @@ async function init() {
   // never delays the popup. The title updates when metadata lands; save() awaits the
   // same promise, so even a quick click still sends the real title/abstract.
   if (tab && /^https?:/i.test(tab.url || "")) {
-    metaPromise = loadMeta();
+    metaPromise = loadMeta(); // save() awaits this -- kept fast (scrape / OpenReview only)
+    prettyTitle(); // cosmetic title resolve; fire-and-forget, save never waits on it
     loadExisting();
   }
 }
 
 async function loadMeta() {
-  // OpenReview: its API from the browser (works on the PDF viewer too). Everything
-  // else: the page's meta tags.
+  // Only the metadata the SERVER cannot get and that SAVE genuinely needs: OpenReview
+  // (Cloudflare-blocked server-side) fetched from the browser, and the page's own meta
+  // tags (local, instant). save() awaits THIS -- so it must stay fast.
   if (/openreview\.net/i.test(tab.url)) META = await fetchOpenReview(tab.url);
   if ((!META || !META.title) && tab.id != null) META = await scrapePageMeta(tab.id);
-  // Still nothing? A PDF viewer has no HTML to scrape -- so ask the server what a save
-  // would extract (it resolves ACL / arXiv / DOI / conference metadata over the web).
-  // This is what puts the real title in the popup for a PDF instead of the file name.
-  if (!META || !META.title) {
-    try {
-      // /api/resolve fetches the page server-side (network), so give it longer -- but
-      // still bounded so it can't hang the save's metadata wait forever.
-      const d = await fetchJSON("/api/resolve?url=" + encodeURIComponent(tab.url), 8000);
-      if (d && d.title) META = { title: d.title, abstract: d.abstract || "", authors: d.authors || "" };
-    } catch {
-      /* offline or not resolvable -- fall back to the tab title */
-    }
-  }
   if (META && META.title) $("title").textContent = META.title;
+}
+
+// A nicer title for a PDF whose page has no meta tags: ask the server to resolve it
+// (ACL / arXiv / DOI over the network -- ~1s). This is PURELY cosmetic for the popup:
+// save() never waits on it, and the server resolves + heals the real title after capture
+// regardless. So a slow resolve can never slow down the save.
+async function prettyTitle() {
+  if (META && META.title) return; // already have a real title from scrape/openreview
+  try {
+    const d = await fetchJSON("/api/resolve?url=" + encodeURIComponent(tab.url), 8000);
+    if (d && d.title && !(META && META.title)) $("title").textContent = d.title;
+  } catch {
+    /* offline or not resolvable -- the tab title stays; the server fills it in on save */
+  }
 }
 
 async function loadExisting() {
